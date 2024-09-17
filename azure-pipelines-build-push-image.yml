@@ -1,0 +1,102 @@
+name: React Spring Web App Deploy Pipeline
+
+# For multiple environments we will create a "Variable Groups" object for each environments (Dev, Test, Acc, Prod)
+# in Azure DevOps to access above set of variables using "- group : <Name of Library Group>" variables tag.
+# Then all variable values w.r.t environments will take automatically.
+
+parameters:
+  - name: environment
+    displayName: Target Environment
+    type: string
+    default: Dev
+    values:
+      - Dev
+      - Test
+
+trigger:
+  - none
+
+variables:
+  - name: dockerImageName
+    value: 'react-data-app'
+  - name: containerRegistryConnection
+    value: 'reactappacrconnection'
+  - name: dockerfilePath
+    value: '**/Dockerfile'
+  - name: dockerImageTag
+    value: 'v$(Build.BuildId)'
+  - name: vmImageName
+    value: 'ubuntu-latest'
+  - name: acrEndpoint
+    value: 'reactacr01.azurecr.io'
+  - name: webAppName
+    value: 'react-webapp-service-container'
+  - name: azureRmConnectionId
+    value: 'reactapprmconnection'
+  - name: javaVersion
+    value: '1.8'
+  - name: acrImageRepo
+    value: '$(acrEndpoint)/$(dockerImageName):$(dockerImageTag)'
+
+stages:
+  - stage: BuildAndPushImage
+    displayName: Build And Push Image Stage
+    jobs:
+      - job: MavenBuildPackageAndSaveArtifacts
+        displayName: Maven Build Package and Save Artifacts
+        pool:
+          vmImage: $(vmImageName)
+        steps:
+          - task: Maven@4
+            displayName: Maven Build Package Task
+            inputs:
+              mavenPomFile: 'pom.xml'
+              mavenOptions: '-Xmx3072m'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: $(javaVersion)
+              jdkArchitectureOption: 'x64'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              goals: 'clean package'
+
+          - task: CopyFiles@2
+            displayName: 'Copy Files to artifact staging directory'
+            inputs:
+              SourceFolder: $(System.DefaultWorkingDirectory)
+              Contents: '**/target/app.jar'
+              TargetFolder: $(Build.ArtifactStagingDirectory)
+
+          - upload: $(Build.ArtifactStagingDirectory)
+            displayName: Publish Artifacts
+            artifact: myapp
+
+          - task: Docker@2
+            displayName: Docker Image Build and Publish To ACR
+            inputs:
+              command: buildAndPush
+              repository: $(dockerImageName)
+              dockerfile: $(dockerfilePath)
+              containerRegistry: $(containerRegistryConnection)
+              tags: $(dockerImageTag)
+
+  - template: azure-pipeline-deploy-webapp.yml
+    parameters:
+      targetEnvironment: 'Dev'
+      previousEnvironment: ''
+      azureSubscription: $(azureRmConnectionId)
+      webAppName: $(webAppName)
+      acrImageRepo: '$(acrEndpoint)/$(dockerImageName):$(dockerImageTag)'
+      vmImageName: $(vmImageName)
+
+  - ${{ if or( eq( variables['Build.SourceBranch'], 'refs/heads/master'), eq( variables['Build.SourceBranch'], 'refs/heads/develop')) }}:
+      - template: azure-pipeline-deploy-webapp.yml
+        parameters:
+          targetEnvironment: 'Test'
+          previousEnvironment: 'Dev'
+          azureSubscription: $(azureRmConnectionId)
+          webAppName: $(webAppName)
+          acrImageRepo: $(acrImageRepo)
+          vmImageName: $(vmImageName)
+
+  # Similarly, we can create Acceptance and Production conditions also,
+  # then Pipeline stages will create for Acceptance and Production environments automatically

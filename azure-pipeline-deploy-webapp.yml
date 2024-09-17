@@ -1,0 +1,33 @@
+parameters:
+  - name: targetEnvironment
+    type: string
+  - name: previousEnvironment
+    type: string
+  - name: azureSubscription
+    type: string
+  - name: webAppName
+    type: string
+  - name: acrImageRepo
+    type: string
+  - name: vmImageName
+    type: string
+
+stages:
+  - stage: '${{ parameters.targetEnvironment }}_DeployContainerWebApp'
+    dependsOn:
+      - BuildAndPushImage
+      - ${{ if in(parameters.targetEnvironment, 'Test') }}:
+          - '${{ parameters.previousEnvironment }}_DeployContainerWebApp'
+    condition: succeeded()
+    jobs:
+      - job: DeployContainerToWebAppService
+        displayName: Deploy Container To WebAppService
+        pool:
+          vmImage: ${{ parameters.vmImageName }}
+        steps:
+          - task: AzureWebAppContainer@1
+            displayName: Deploy WebApp Container Task
+            inputs:
+              azureSubscription: ${{ parameters.azureSubscription }}
+              appName: ${{ parameters.webAppName }}
+              imageName: ${{ parameters.acrImageRepo }}
